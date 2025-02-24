@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Visitor Analysis Dashboard</title>
+<script src="https://d3js.org/d3.v6.min.js"></script>
+<style>
+      body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(to right, #6dd5ed, #2193b0);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            display: none;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            width: 320px;
+        }
+        h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        select, button {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 16px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        button {
+            background: linear-gradient(to right, #ff9966, #ff5e62);
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: 0.3s;
+            font-weight: bold;
+        }
+        button:hover {
+            background: linear-gradient(to right, #ff5e62, #ff9966);
+        }
+        .message {
+            margin-top: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #444;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+        .message.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .chart-container { display: flex; flex-wrap: wrap; }
+        .chart { margin: 30px; }
+        svg { width: 600px; height: 300px; }
+        .tooltip {
+            position: absolute;
+            background-color: white;
+            border: 1px solid black;
+            padding: 5px;
+            visibility: hidden;
+        }
+        #pie-chart-container {
+            display: flex;
+            flex-direction: row; 
+            align-items: center; 
+            justify-content: center; 
+        }
+
+        #pie-chart-header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 10px; 
+        }
+
+        .legend {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            margin-left: 20px; 
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+    </style>
+</head>
+<body>
+<h1>Visitor Analysis Dashboard</h1>
+<input accept=".csv" id="upload" type="file"/>
+<div class="chart-container" style="display: flex; align-items: flex-start; justify-content: space-between; width: 100%;"><div style="flex: 2;"><div class="chart" id="visitor-analysis"></div></div><div style="flex: 1; margin-left: 20px;"><div class="container" id="dynamicDiv">
+<h2>🌍 Select Month &amp; Weather 🌦️</h2>
+<select id="monthSelect">
+<option value="">Select Month</option>
+<option value="1">January</option>
+<option value="2">February</option>
+<option value="3">March</option>
+<option value="4">April</option>
+<option value="5">May</option>
+<option value="6">June</option>
+<option value="7">July</option>
+<option value="8">August</option>
+<option value="9">September</option>
+<option value="10">October</option>
+<option value="11">November</option>
+<option value="12">December</option>
+</select>
+<select id="weatherSelect">
+<option value="">Select Weather</option>
+<option>Snowy</option> <option>Cloudy</option> <option>Sunny</option>
+<option>Rainy</option> <option>Stormy</option>
+</select>
+<button onclick="showMessage()">Show Message</button>
+<div class="toast" id="toast"></div>
+</div></div></div><div class="chart-container">
+
+<div class="chart" id="pie-chart-container">
+<svg height="300" id="pie-chart" width="300"></svg>
+<div id="pie-legend"></div> 
+</div>
+</div>
+<div class="chart-container">
+<div class="chart" id="pie-chart-container">
+<svg height="300" id="pie-chart2" width="300"></svg>
+<div id="pie-legend2"></div> 
+</div>
+</div>
+<div class="chart-container">
+<div class="chart" id="weekly-analysis"></div>
+<div class="chart" id="daily-analysis"></div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+<script>
+        function redirectToPage() {
+            window.location.href = "predict.html"; 
+        }
+    </script>
+<script>
+        document.getElementById('upload').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = d3.csvParse(e.target.result);
+                processData(data);
+            };
+            reader.readAsText(file);
+        });
+
+        let currentData;
+        const tooltip = d3.select("#tooltip");
+
+        function processData(data) {
+            data.forEach(d => {
+                d['Number of Visitors'] = +d['Number of Visitors'];
+                d.Date = new Date(d.Date);
+            });
+            currentData = data;
+            visualizeVisitorAnalysis(data);
+        }
+
+        function aggregateMonthlyData(data) {
+            const nestedData = d3.rollup(data, v => d3.sum(v, d => d['Number of Visitors']), d => d3.timeMonth(d.Date));
+            return Array.from(nestedData, ([date, visitors]) => ({ date: new Date(date), visitors }));
+        }
+
+        function aggregateWeeklyData(data, month) {
+            const filteredData = data.filter(d => d.Date.getMonth() === month);
+            const startOfMonth = new Date(filteredData[0].Date.getFullYear(), month, 1);
+            
+            let weeklyData = d3.rollup(filteredData, v => d3.sum(v, d => d['Number of Visitors']), d => {
+                return Math.min(Math.floor((d.Date - startOfMonth) / (7 * 24 * 60 * 60 * 1000)), 3);
+            });
+            
+            return Array.from(weeklyData, ([week, visitors]) => ({ week: `Week ${week + 1}`, visitors }));
+        }
+
+        function aggregatePieChartvisitorData(data, month) {
+            const filteredData = data.filter(d => d.Date.getMonth() === month);
+            const nestedData = d3.rollup(
+                filteredData,
+                v => d3.sum(v, d => d['Number of Visitors']),
+                d => d['Visitor Type']
+            );
+            return Array.from(nestedData, ([type, count]) => ({ type, count }));
+        }
+
+        function aggregatePieChartvisitorData2(data, month) {
+            const filteredData = data.filter(d => d.Date.getMonth() === month);
+            const nestedData = d3.rollup(
+                filteredData,
+                v => d3.sum(v, d => d['Number of Visitors']),
+                d => d['Weather Condition']
+            );
+            return Array.from(nestedData, ([type, count]) => ({ type, count }));
+        }
+
+        function aggregateDailyData(data, month) {
+            return data.filter(d => d.Date.getMonth() === month)
+                .map(d => ({ day: d.Date.getDate(), visitors: d['Number of Visitors'] }));
+        }
+
+        function visualizeVisitorAnalysis(data) {
+            const dataset = aggregateMonthlyData(data);
+            d3.select("#visitor-analysis").html("");
+            createBarChart("#visitor-analysis", dataset, "date", "visitors", "Monthly Visitors", "steelblue", true);
+        }
+
+        function visualizeWeeklyAnalysis(month) {
+            const dataset = aggregateWeeklyData(currentData, month);
+            d3.select("#weekly-analysis").html("");
+            createBarChart("#weekly-analysis", dataset, "week", "visitors", "Weekly Visitors", "orange", false);
+        }
+
+        function visualizeDailyAnalysis(month) {
+            const dataset = aggregateDailyData(currentData, month);
+            d3.select("#daily-analysis").html("");
+            createBarChart("#daily-analysis", dataset, "day", "visitors", "Daily Visitors", "green", false);
+        }
+
+       function visualizePieChart(month) {
+            console.log("month "+month)
+            const dataset = aggregatePieChartvisitorData(currentData, month);
+            d3.select("#pie-chart").html("");
+            d3.select("#pie-chart2").html("");
+            createPieChart(dataset);
+            createPieChart2(aggregatePieChartvisitorData2(currentData, month));
+        }
+
+        function createBarChart(container, data, xKey, yKey, title, color, isMonthly = false) {
+            const svg = d3.select(container).append("svg")
+                .attr("width", 600)
+                .attr("height", 350); 
+
+            const margin = { top: 40, right: 30, bottom: 50, left: 50 },
+                width = 600 - margin.left - margin.right,
+                height = 300 - margin.top - margin.bottom;
+
+            const x = d3.scaleBand()
+                .domain(data.map(d => isMonthly ? d.date.toLocaleString('default', { month: 'long' }) : d[xKey]))
+                .range([0, width])
+                .padding(0.1);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(data, d => d[yKey])])
+                .nice()
+                .range([height, 0]);
+
+            const g = svg.append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // Title
+            svg.append("text")
+                .attr("x", margin.left + width / 2)
+                .attr("y", 20)
+                .attr("text-anchor", "middle")
+                .style("font-size", "16px")
+                .style("font-weight", "bold")
+                .text(title);
+
+            const bars = g.selectAll("rect").data(data).enter().append("rect")
+                .attr("x", d => x(isMonthly ? d.date.toLocaleString('default', { month: 'long' }) : d[xKey]))
+                .attr("y", d => y(d[yKey]))
+                .attr("width", x.bandwidth())
+                .attr("height", d => height - y(d[yKey]))
+                .attr("fill", color)
+                .on("mouseover", function(event, d) {
+                    tooltip.style("visibility", "visible")
+                        .text(`Visitors: ${d[yKey]}`);
+                })
+                .on("mousemove", function(event) {
+                    tooltip.style("top", `${event.pageY}px`)
+                        .style("left", `${event.pageX + 10}px`);
+                })
+                .on("mouseout", function() {
+                    tooltip.style("visibility", "hidden");
+                })
+                .on("click", function(event, d) {
+                    bars.attr("fill", color); 
+                    d3.select(this).attr("fill", "orange"); 
+                     
+                    if (isMonthly) {
+                        visualizeWeeklyAnalysis(d.date.getMonth());
+                        visualizeDailyAnalysis(d.date.getMonth());
+                        visualizePieChart(d.date.getMonth());
+                    }
+                    let div = document.getElementById("dynamicDiv");
+                    div.style.display = "block"; 
+                });
+
+            g.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x));
+
+            g.append("g").call(d3.axisLeft(y));
+        }
+
+
+        function createPieChart(data) {
+            const width = 300, height = 300, radius = Math.min(width, height) / 2;
+            const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+            d3.select("#pie-chart").selectAll("*").remove(); 
+
+            const svg = d3.select("#pie-chart")
+                .attr("width", width)
+                .attr("height", height)
+                .append("g")
+                .attr("transform", `translate(${width / 2},${height / 2})`);
+
+            // Append title
+            svg.append("text")
+                .attr("x", 300)
+                .attr("y", -height / 2 + 100)
+                .attr("text-anchor", "middle")
+                .attr("font-size", "16px")
+                .attr("font-weight", "bold")
+                .text("Visitor Type Breakdown By Month");
+
+            const pie = d3.pie().value(d => d.count);
+            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+            const labelArc = d3.arc().innerRadius(radius * 0.5).outerRadius(radius * 0.9);
+
+            const total = d3.sum(data, d => d.count); 
+
+            const arcs = svg.selectAll("arc")
+                .data(pie(data))
+                .enter()
+                .append("g");
+
+            arcs.append("path")
+                .attr("d", arc)
+                .attr("fill", d => color(d.data.type))
+                .on("mouseover", function (event, d) {
+                    tooltip.style("visibility", "visible")
+                        .text(`${d.data.type}: ${d.data.count} (${((d.data.count / total) * 100).toFixed(1)}%)`);
+                })
+                .on("mousemove", function (event) {
+                    tooltip.style("top", `${event.pageY}px`).style("left", `${event.pageX + 10}px`);
+                })
+                .on("mouseout", function () {
+                    tooltip.style("visibility", "hidden");
+                });
+            arcs.append("text")
+                .attr("transform", d => `translate(${labelArc.centroid(d)})`)
+                .attr("text-anchor", "middle")
+                .attr("font-size", "12px")
+                .attr("fill", "white")
+                .text(d => `${((d.data.count / total) * 100).toFixed(1)}%`);
+            const legend = d3.select("#pie-legend").html("");
+            data.forEach(d => {
+                const item = legend.append("div").attr("class", "legend-item");
+                item.append("div").attr("class", "legend-color").style("background", color(d.type));
+                item.append("span").text(`${d.type} (${d.count})`);
+            });
+        }
+
+        function createPieChart2(data) {
+            const width = 300, height = 300, radius = Math.min(width, height) / 2;
+            const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+            d3.select("#pie-chart2").selectAll("*").remove(); 
+
+            const svg = d3.select("#pie-chart2")
+                .attr("width", width)
+                .attr("height", height)
+                .append("g")
+                .attr("transform", `translate(${width / 2},${height / 2})`);
+
+            svg.append("text")
+                .attr("x", 300)
+                .attr("y", -height / 2 + 100)
+                .attr("text-anchor", "middle")
+                .attr("font-size", "16px")
+                .attr("font-weight", "bold")
+                .text("Visitor Type Breakdown By Month");
+
+            const pie = d3.pie().value(d => d.count);
+            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+            const labelArc = d3.arc().innerRadius(radius * 0.5).outerRadius(radius * 0.9);
+
+            const total = d3.sum(data, d => d.count); // Calculate total count
+
+            const arcs = svg.selectAll("arc")
+                .data(pie(data))
+                .enter()
+                .append("g");
+
+            arcs.append("path")
+                .attr("d", arc)
+                .attr("fill", d => color(d.data.type))
+                .on("mouseover", function (event, d) {
+                    tooltip.style("visibility", "visible")
+                        .text(`${d.data.type}: ${d.data.count} (${((d.data.count / total) * 100).toFixed(1)}%)`);
+                })
+                .on("mousemove", function (event) {
+                    tooltip.style("top", `${event.pageY}px`).style("left", `${event.pageX + 10}px`);
+                })
+                .on("mouseout", function () {
+                    tooltip.style("visibility", "hidden");
+                });
+
+            arcs.append("text")
+                .attr("transform", d => `translate(${labelArc.centroid(d)})`)
+                .attr("text-anchor", "middle")
+                .attr("font-size", "12px")
+                .attr("fill", "white")
+                .text(d => `${((d.data.count / total) * 100).toFixed(1)}%`);
+
+            const legend = d3.select("#pie-legend2").html("");
+            data.forEach(d => {
+                const item = legend.append("div").attr("class", "legend-item");
+                item.append("div").attr("class", "legend-color").style("background", color(d.type));
+                item.append("span").text(`${d.type} (${d.count})`);
+            });
+        }
+
+
+         function showMessage() {
+            let month = parseInt(document.getElementById("monthSelect").value, 10) - 1;
+            let weather = document.getElementById("weatherSelect").value;
+
+            const filteredData = currentData.filter(d => d.Date.getMonth() === month);
+    
+            const nestedData = d3.rollup(
+                filteredData,
+                v => d3.sum(v, d => d['Number of Visitors']),
+                d => d['Weather Condition']
+            );
+            const result = Object.fromEntries(nestedData);
+            console.log(result[weather]); 
+
+            ///document.getElementById("message").innerText = `Predicted Visitor Count ${result[weather]} You selected ${month} with ${weather} weather!`;
+            const message = "Predicted Visitor Count "+result[weather]
+            const toast = document.getElementById("toast");
+            toast.textContent = message;
+            toast.classList.add("show");
+
+            // Hide after 3 seconds
+            setTimeout(() => {
+                toast.classList.remove("show");
+            }, 3000);
+        }
+
+    </script>
+</body>
+</html>
